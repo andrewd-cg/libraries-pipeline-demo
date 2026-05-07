@@ -1,0 +1,9 @@
+{
+  "name": "libraries-pipeline-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Demo of installing npm packages from Chainguard Libraries in CI",
+  "dependencies": {
+    "depd": "^2.0.0"
+  }
+}

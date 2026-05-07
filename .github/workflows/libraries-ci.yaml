@@ -33,3 +33,42 @@ jobs:
           curl -sSf \
             -H "Authorization: Bearer ${{ steps.libraries.outputs.token }}" \
             https://libraries.cgr.dev/javascript/depd | jq .
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: npm install from Chainguard Libraries
+        env:
+          LIBRARIES_TOKEN: ${{ steps.libraries.outputs.token }}
+        run: |
+          cat > .npmrc <<EOF
+          registry=https://libraries.cgr.dev/javascript/
+          //libraries.cgr.dev/javascript/:_authToken=${LIBRARIES_TOKEN}
+          always-auth=true
+          EOF
+          npm install --no-audit --no-fund
+          npm ls depd
+
+      - name: Show tarball sources from package-lock.json
+        run: |
+          echo "Resolved tarball URLs:"
+          jq -r '
+            .packages
+            | to_entries[]
+            | select(.value.resolved)
+            | "\(.key | sub("^node_modules/"; ""))\t\(.value.resolved)"
+          ' package-lock.json | column -t -s $'\t'
+
+          {
+            echo "## Tarball sources"
+            echo
+            echo "| Package | Resolved URL |"
+            echo "| --- | --- |"
+            jq -r '
+              .packages
+              | to_entries[]
+              | select(.value.resolved)
+              | "| \(.key | sub("^node_modules/"; "")) | \(.value.resolved) |"
+            ' package-lock.json
+          } >> "$GITHUB_STEP_SUMMARY"

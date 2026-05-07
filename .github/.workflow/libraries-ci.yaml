@@ -1,0 +1,34 @@
+name: Libraries auth example
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  libraries-auth:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up chainctl and assume Chainguard identity
+        uses: chainguard-dev/setup-chainctl@main
+        with:
+          identity: 9188682cf9821b6157bb8a00d8376efc4a2933e3/4cc653a7b108d929 #chainctl iam identities create github libraries-ci --github-repo=andrewd-cg/libraries-pipeline-demo --github-ref=refs/heads/main --role=libraries.javascript.pull
+
+      - name: Get short-lived Libraries token
+        id: libraries
+        run: |
+          TOKEN="$(chainctl auth token --audience=libraries.cgr.dev)"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Test with curl against Libraries
+        run: |
+          curl -sSf \
+            -H "Authorization: Bearer ${{ steps.libraries.outputs.token }}" \
+            https://libraries.cgr.dev/javascript/depd | jq .

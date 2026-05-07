@@ -25,6 +25,7 @@ jobs:
         id: libraries
         run: |
           TOKEN="$(chainctl auth token --audience=libraries.cgr.dev)"
+          echo "::add-mask::$TOKEN"
           echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: Test with curl against Libraries

@@ -1,0 +1,21 @@
+job:
+  package-manager: npm_and_yarn
+  allowed-updates:
+    - dependency-type: direct
+      update-type: all
+    - dependency-type: indirect
+      update-type: security
+  source:
+    provider: github
+    repo: $GITHUB_REPOSITORY
+    directory: /
+    branch: main
+
+credentials:
+  - type: git_source
+    host: github.com
+    username: x-access-token
+    password: $LOCAL_GITHUB_ACCESS_TOKEN
+  - type: npm_registry
+    registry: libraries.cgr.dev/javascript/
+    token: $LIBRARIES_TOKEN

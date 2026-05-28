@@ -1,0 +1,163 @@
+name: Dependabot (Chainguard Libraries)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dependabot-update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      - name: Set up chainctl and assume Chainguard identity
+        uses: chainguard-dev/setup-chainctl@main
+        with:
+          identity: 9188682cf9821b6157bb8a00d8376efc4a2933e3/4cc653a7b108d929
+
+      - name: Get short-lived Libraries token
+        id: libraries
+        run: |
+          TOKEN="$(chainctl auth token --audience=libraries.cgr.dev)"
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Download dependabot-cli
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo dependabot/cli --pattern '*linux-amd64.tar.gz'
+          tar xzf *-linux-amd64.tar.gz
+
+      - name: Run Dependabot against Chainguard Libraries
+        env:
+          LOCAL_GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LIBRARIES_TOKEN: ${{ steps.libraries.outputs.token }}
+        run: |
+          ./dependabot update \
+            -f repo/.github/dependabot/npm-job.yml \
+            --local repo \
+            --timeout 20m \
+            -o result.jsonl
+
+      - name: Summarize proposed updates
+        if: always()
+        run: |
+          if [[ ! -s result.jsonl ]]; then
+            echo "No Dependabot output produced." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## Proposed dependency updates"
+            echo
+            echo "| Dependency | From | To |"
+            echo "| --- | --- | --- |"
+            jq -r '
+              select(.type == "create_pull_request")
+              | .data.dependencies[]
+              | "| \(.name) | \(.["previous-version"] // "?") | \(.version) |"
+            ' result.jsonl
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Dependabot output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependabot-result
+          path: result.jsonl
+
+  create-pull-requests:
+    needs: dependabot-update
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dependabot-result
+
+      - name: Open pull requests for each proposed update
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! -s result.jsonl ]]; then
+            echo "No Dependabot output to process."
+            exit 0
+          fi
+
+          mapfile -t events < <(jq -c 'select(.type == "create_pull_request")' result.jsonl)
+          if [[ "${#events[@]}" -eq 0 ]]; then
+            echo "No proposed updates — nothing to open."
+            exit 0
+          fi
+
+          git config user.name "dependabot[bot]"
+          git config user.email "49699333+dependabot[bot]@users.noreply.github.com"
+
+          for event in "${events[@]}"; do
+            data=$(jq -c '.data' <<<"$event")
+            base_sha=$(jq -r '."base-commit-sha"' <<<"$data")
+            pr_title=$(jq -r '."pr-title"' <<<"$data")
+            pr_body=$(jq -r '."pr-body"' <<<"$data")
+            commit_message=$(jq -r '."commit-message"' <<<"$data")
+
+            branch_slug=$(printf '%s' "$commit_message" | sha1sum | cut -c1-12)
+            branch="dependabot/${branch_slug}"
+
+            echo "::group::${pr_title} -> ${branch}"
+
+            git checkout -B "$branch" "$base_sha"
+
+            while IFS= read -r file; do
+              name=$(jq -r '.name' <<<"$file")
+              directory=$(jq -r '.directory' <<<"$file")
+              relpath="${directory#/}/${name}"
+              relpath="${relpath#/}"
+
+              deleted=$(jq -r '.deleted // false' <<<"$file")
+              operation=$(jq -r '.operation // ""' <<<"$file")
+              if [[ "$deleted" == "true" || "$operation" == "delete" ]]; then
+                git rm -f -- "$relpath" || true
+                continue
+              fi
+
+              mkdir -p "$(dirname "$relpath")"
+              encoding=$(jq -r '.content_encoding // "utf-8"' <<<"$file")
+              if [[ "$encoding" == "base64" ]]; then
+                jq -r '.content' <<<"$file" | base64 -d > "$relpath"
+              else
+                jq -r '.content' <<<"$file" > "$relpath"
+              fi
+              git add -- "$relpath"
+            done < <(jq -c '."updated-dependency-files"[]' <<<"$data")
+
+            git commit -m "$commit_message"
+            git push -f origin "$branch"
+
+            existing=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+            if [[ -n "$existing" ]]; then
+              echo "PR #${existing} already open for ${branch}; branch updated."
+            else
+              gh pr create \
+                --base main \
+                --head "$branch" \
+                --title "$pr_title" \
+                --body "$pr_body"
+            fi
+
+            echo "::endgroup::"
+          done

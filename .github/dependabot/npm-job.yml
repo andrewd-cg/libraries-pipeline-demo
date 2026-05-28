@@ -19,3 +19,4 @@ credentials:
   - type: npm_registry
     registry: libraries.cgr.dev/javascript/
     token: $LIBRARIES_TOKEN
+    replaces-base: true

@@ -39,8 +39,11 @@ jobs:
           LOCAL_GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LIBRARIES_TOKEN: ${{ steps.libraries.outputs.token }}
         run: |
+          envsubst '$GITHUB_REPOSITORY' \
+            < repo/.github/dependabot/npm-job.yml \
+            > job.yml
           ./dependabot update \
-            -f repo/.github/dependabot/npm-job.yml \
+            -f job.yml \
             --local repo \
             --timeout 20m \
             -o result.jsonl

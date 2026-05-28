@@ -48,7 +48,6 @@ jobs:
           always-auth=true
           EOF
           npm install --no-audit --no-fund
-          npm ls depd
 
       - name: Show tarball sources from package-lock.json
         run: |
